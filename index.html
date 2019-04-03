@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title></title>
+<style>
+html, body {
+  width:  100%;
+  height: 100%;
+  margin: 0;
+}
+</style>
+</head>
+<body onload='onload1()'>
+<canvas style='width: 100%; height: 100%' id='canvasMain'></canvas>
+
+<script>
+var CID_NEXT = 1
+var Character = function() {
+	if (!(this instanceof Character)) {
+		return new Character()
+	}
+	this.cid = CID_NEXT++
+	this.posX = 10 + Math.random() * 1000
+	this.posY = 10 + Math.random() * 400
+	this.scaleX = 10
+	this.scaleY = 10
+	this.scale = 10
+	this.moveSpeed = 30
+	this.health = 100
+	this.shield = 0
+	this.mana = 5
+	this.atk = 10
+	this.def = 1
+	this.fraction = 0
+	this.aggro = 1 + Math.random() * 0.1
+	this.skills = [{
+		cooldown: 2000,
+		range: 20,
+		canUse: function(self) { return true },
+		damage: function(self) { return self.atk },
+		aggro: function(self, damage) { return damage * self.aggro },
+		nextTs: 0,
+	}]
+	this.aggros = {}
+	this.target = null
+}
+
+Character.prototype.receiveDamage = function(srcChr, damage, aggro) {
+	if (!(srcChr.cid in this.aggros)) {
+		this.aggros[srcChr.cid] = 0
+	}
+	this.aggros[srcChr.cid] += aggro
+	this.health -= Math.max((damage - this.def), 0)
+	
+	console.log(this.cid + ' hit by ' + srcChr.cid + ' damage ' + damage)
+}
+
+var characters = []
+
+function onload1() {
+	for (var i = 0; i < 15; i++) {
+		var chr = new Character()
+		if (i >= 5) {
+			chr.fraction = 1
+		}
+		if (i >= 10) {
+			chr.fraction = 2
+		}
+		//chr.posX = i * 100 + 10
+		characters.push(chr)
+	}
+
+	setTimeout(redraw, 100)
+}
+
+var lastUpdate = 0
+function updateFrame() {
+	var now = new Date().getTime()
+	if (lastUpdate == 0) {
+		lastUpdate = now
+	}
+	while (now - lastUpdate >= 100) {
+		for (var i = 0; i < characters.length; i++) {
+			var chr = characters[i]
+			chr.posX2 = 0
+			chr.posY2 = 0
+		}
+		for (var i = 0; i < characters.length; i++) {
+			var chr = characters[i]
+			var myfraction = chr.fraction
+			var allies = JSON.parse(JSON.stringify(characters.filter(function(chr2) {
+				return chr.fraction == chr2.fraction && chr.cid != chr2.cid
+			})))
+			var enemies = JSON.parse(JSON.stringify(characters.filter(function(chr2) {
+				return chr.fraction != chr2.fraction
+			})))
+			allies.forEach(function(chr1) {
+				chr1.ally_distance = Math.sqrt((chr.posX - chr1.posX) * (chr.posX - chr1.posX) +
+												(chr.posY - chr1.posY) * (chr.posY - chr1.posY))
+			})
+			enemies.forEach(function(chr1) {
+				if (chr1.cid in chr.aggros) {
+					chr1.enemy_aggro = chr.aggros[chr1.cid]
+				} else {
+					chr1.enemy_aggro = 0
+				}
+				
+				chr1.enemy_distance = Math.sqrt((chr.posX - chr1.posX) * (chr.posX - chr1.posX) +
+												(chr.posY - chr1.posY) * (chr.posY - chr1.posY))
+			})
+			enemies.sort(function(chr1, chr2) {
+				if (chr1.enemy_aggro == chr2.enemy_aggro) {
+					return chr1.enemy_distance - chr2.enemy_distance
+				}
+				return chr2.enemy_aggro - chr1.enemy_aggro
+			})
+			if (enemies.length > 0) {
+				var enemy_copy = enemies[0]
+				chr.target = enemy_copy.cid
+				var enemy = characters.find(function(chr1) { return chr1.cid == chr.target })
+
+				var skill_use = false
+				for (var ski = 0 ; ski < chr.skills.length; ski++) {
+					var skill = chr.skills[ski]
+					if (skill.nextTs <= now && skill.range >= enemy_copy.enemy_distance) {
+						skill.nextTs = now + skill.cooldown
+						var damage = skill.damage(chr)
+						var aggro = skill.aggro(chr, damage)
+						enemy.receiveDamage(chr, damage, aggro)
+						skill_use = true
+					}
+				}
+				
+				if (!skill_use) {
+					if (enemy_copy.enemy_distance > 0) {
+						chr.posX2 += (enemy_copy.posX - chr.posX) / enemy_copy.enemy_distance
+						chr.posY2 += (enemy_copy.posY - chr.posY) / enemy_copy.enemy_distance
+					}
+				}
+				if (enemy_copy.enemy_distance < chr.scale) {
+					chr.posX2 -= (enemy_copy.posX - chr.posX) / enemy_copy.enemy_distance * 1.5
+					chr.posY2 -= (enemy_copy.posY - chr.posY) / enemy_copy.enemy_distance * 1.5
+				}
+			}
+			allies.forEach(function(ally) {
+				if (ally.ally_distance < chr.scale) {
+					chr.posX2 -= (ally.posX - chr.posX) / ally.ally_distance * 0.5
+					chr.posY2 -= (ally.posY - chr.posY) / ally.ally_distance * 0.5
+				}
+			})
+		}
+		
+		for (var i = 0; i < characters.length; i++) {
+			var chr = characters[i]
+			chr.posX += chr.posX2
+			chr.posY += chr.posY2
+		}
+		
+		characters = characters.filter(function(chr) {
+			return chr.health > 0
+		})
+	
+		lastUpdate += 100
+	}
+}
+
+function redraw() {
+	var canvas = document.getElementById('canvasMain')
+	var ctx = canvas.getContext('2d')
+
+	canvas.width = window.innerWidth
+	canvas.height = window.innerHeight
+
+	updateFrame()
+	for (var i = 0; i < characters.length; i++) {
+		var chr = characters[i]
+		var tgt = (chr.target != null) ? (characters.find(function(chr1) { return chr1.cid == chr.target })) : null
+
+		if (chr.fraction == 0) {
+			ctx.fillStyle = "rgb(0,0,200)"
+		} else if (chr.fraction == 1) {
+			ctx.fillStyle = "rgb(200,0,0)"
+		} else if (chr.fraction == 2) {
+			ctx.fillStyle = "rgb(0,200,0)"
+		}
+		ctx.fillRect(chr.posX - chr.scaleX / 2, chr.posY - chr.scaleY / 2, chr.scaleX, chr.scaleY)
+		if (tgt != null) {
+			ctx.beginPath()
+			ctx.fillRect(chr.posX - chr.scaleX / 2, chr.posY - chr.scaleY / 2, chr.scaleX, chr.scaleY)
+			ctx.moveTo(chr.posX, chr.posY)
+			ctx.lineTo(tgt.posX, tgt.posY)
+			ctx.stroke()
+		}
+	}
+	
+	
+	setTimeout(redraw, 100)
+}
+
+</script>
+</body>
+</html>
